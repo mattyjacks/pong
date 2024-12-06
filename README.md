@@ -1,5 +1,7 @@
 # 🏓 Cosmic Pong - A Journey Through Space and Time
 
+## (Sarcastic) Summary [I USED AI FOR EVERYTHING]
+
 > "Sometimes the simplest ideas take the longest to perfect." - Me, after countless nights of debugging particle physics
 
 ## The Story Behind the Game
