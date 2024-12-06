@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Pong - 2 Players</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #scores {
+            position: absolute;
+            width: 100%;
+            top: 20px;
+            color: white;
+            font-size: 24px;
+            z-index: 100;
+            text-align: center;
+        }
+        #player1-score {
+            position: absolute;
+            left: 20px;
+            color: #ff4444;
+        }
+        #player2-score {
+            position: absolute;
+            right: 20px;
+            color: #44ff44;
+        }
+        #restart {
+            position: absolute;
+            top: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            z-index: 100;
+        }
+        #restart:hover {
+            background: #45a049;
+        }
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <div id="scores">
+        <div id="player1-score">Player 1: 0</div>
+        <div id="player2-score">Player 2: 0</div>
+    </div>
+    <button id="restart">Restart Game</button>
+    <div id="controls">
+        Player 1 (Top): A/D keys | Player 2 (Bottom): Left/Right Arrow keys
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let scene, camera, renderer, paddle1, paddle2, ball, particles = [];
+        let player1Score = 0, player2Score = 0;
+        let gameStarted = false;
+        const particleCount = 150;
+        const paddleSpeed = 0.15;
+        const keys = {};
+        let lastScorer = null;
+        let ballTrail = [];
+        let backgroundParticles = [];
+        
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            const pointLight = new THREE.PointLight(0xffffff, 1);
+            pointLight.position.set(5, 5, 5);
+            scene.add(pointLight);
+
+            // Background particles
+            const bgParticleGeometry = new THREE.SphereGeometry(0.03, 8, 8);
+            const bgParticleMaterial = new THREE.MeshPhongMaterial({
+                color: 0x4444ff,
+                transparent: true,
+                opacity: 0.3
+            });
+
+            for(let i = 0; i < 100; i++) {
+                const particle = new THREE.Mesh(bgParticleGeometry, bgParticleMaterial);
+                particle.position.set(
+                    (Math.random() - 0.5) * 20,
+                    (Math.random() - 0.5) * 20,
+                    -5
+                );
+                particle.rotation.z = Math.random() * Math.PI * 2;
+                particle.rotationSpeed = (Math.random() - 0.5) * 0.02;
+                particle.orbitRadius = Math.random() * 3 + 2;
+                particle.orbitSpeed = (Math.random() - 0.5) * 0.01;
+                particle.initialX = particle.position.x;
+                particle.initialY = particle.position.y;
+                backgroundParticles.push(particle);
+                scene.add(particle);
+            }
+
+            // Ball trail
+            const trailGeometry = new THREE.SphereGeometry(0.08, 16, 16);
+            const trailMaterial = new THREE.MeshPhongMaterial({
+                color: 0xffaa00,
+                transparent: true,
+                opacity: 0.3
+            });
+
+            for(let i = 0; i < 10; i++) {
+                const trailPart = new THREE.Mesh(trailGeometry, trailMaterial);
+                trailPart.visible = false;
+                ballTrail.push(trailPart);
+                scene.add(trailPart);
+            }
+
+            // Paddles
+            const paddleGeometry = new THREE.BoxGeometry(2, 0.3, 0.3);
+            const paddle1Material = new THREE.MeshPhongMaterial({ color: 0xff4444 });
+            const paddle2Material = new THREE.MeshPhongMaterial({ color: 0x44ff44 });
+            
+            paddle1 = new THREE.Mesh(paddleGeometry, paddle1Material);
+            paddle2 = new THREE.Mesh(paddleGeometry, paddle2Material);
+            
+            paddle1.position.set(0, 4, 0);
+            paddle2.position.set(0, -4, 0);
+            
+            scene.add(paddle1);
+            scene.add(paddle2);
+
+            // Ball
+            const ballGeometry = new THREE.SphereGeometry(0.15, 32, 32);
+            const ballMaterial = new THREE.MeshPhongMaterial({ color: 0xffffff });
+            ball = new THREE.Mesh(ballGeometry, ballMaterial);
+            resetBall();
+            scene.add(ball);
+
+            // Collision particles
+            const particleGeometry = new THREE.SphereGeometry(0.02, 8, 8);
+            const particleMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0xff8800,
+                transparent: true,
+                opacity: 0.6
+            });
+
+            for(let i = 0; i < particleCount; i++) {
+                const particle = new THREE.Mesh(particleGeometry, particleMaterial);
+                particle.visible = false;
+                particle.velocity = new THREE.Vector3();
+                particles.push(particle);
+                scene.add(particle);
+            }
+
+            camera.position.z = 10;
+
+            window.addEventListener('keydown', e => keys[e.key] = true);
+            window.addEventListener('keyup', e => keys[e.key] = false);
+            window.addEventListener('resize', onWindowResize);
+            document.getElementById('restart').addEventListener('click', restartGame);
+        }
+
+        function resetBall() {
+            if (lastScorer === 'player1') {
+                ball.position.set(paddle2.position.x, -3.5, 0);
+            } else if (lastScorer === 'player2') {
+                ball.position.set(paddle1.position.x, 3.5, 0);
+            } else {
+                ball.position.set(0, 0, 0);
+            }
+
+            ball.velocity = new THREE.Vector3(
+                (Math.random() - 0.5) * 0.1,
+                lastScorer === 'player1' ? 0.15 : -0.15,
+                0
+            );
+        }
+
+        function updateBackgroundParticles() {
+            backgroundParticles.forEach(particle => {
+                particle.rotation.z += particle.rotationSpeed;
+                const time = Date.now() * particle.orbitSpeed;
+                particle.position.x = particle.initialX + Math.cos(time) * particle.orbitRadius;
+                particle.position.y = particle.initialY + Math.sin(time) * particle.orbitRadius;
+            });
+        }
+
+        function updateBallTrail() {
+            for(let i = ballTrail.length - 1; i > 0; i--) {
+                ballTrail[i].position.copy(ballTrail[i-1].position);
+                ballTrail[i].visible = true;
+                ballTrail[i].material.opacity = 0.3 * (1 - i / ballTrail.length);
+            }
+            if(ballTrail.length > 0) {
+                ballTrail[0].position.copy(ball.position);
+                ballTrail[0].visible = true;
+            }
+        }
+
+        function createParticleExplosion(position) {
+            for(let particle of particles) {
+                if(!particle.visible) {
+                    particle.position.copy(position);
+                    particle.velocity.set(
+                        (Math.random() - 0.5) * 0.2,
+                        (Math.random() - 0.5) * 0.2,
+                        (Math.random() - 0.5) * 0.2
+                    );
+                    particle.visible = true;
+                    particle.life = 60;
+                    break;
+                }
+            }
+        }
+
+        function updateParticles() {
+            particles.forEach(particle => {
+                if(particle.visible) {
+                    particle.position.add(particle.velocity);
+                    particle.life--;
+                    if(particle.life <= 0) {
+                        particle.visible = false;
+                    }
+                }
+            });
+        }
+
+        function updatePaddles() {
+            // Player 1 (Top) - A and D keys
+            if(keys['a'] || keys['A']) {
+                paddle1.position.x = Math.max(-4, paddle1.position.x - paddleSpeed);
+            }
+            if(keys['d'] || keys['D']) {
+                paddle1.position.x = Math.min(4, paddle1.position.x + paddleSpeed);
+            }
+
+            // Player 2 (Bottom) - Left and Right arrow keys
+            if(keys['ArrowLeft']) {
+                paddle2.position.x = Math.max(-4, paddle2.position.x - paddleSpeed);
+            }
+            if(keys['ArrowRight']) {
+                paddle2.position.x = Math.min(4, paddle2.position.x + paddleSpeed);
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function restartGame() {
+            player1Score = 0;
+            player2Score = 0;
+            updateScoreDisplay();
+            resetBall();
+            gameStarted = true;
+        }
+
+        function updateScoreDisplay() {
+            document.getElementById('player1-score').textContent = `Player 1: ${player1Score}`;
+            document.getElementById('player2-score').textContent = `Player 2: ${player2Score}`;
+        }
+
+        function updateGame() {
+            if(!gameStarted) return;
+
+            updatePaddles();
+            updateBackgroundParticles();
+            updateBallTrail();
+
+            ball.position.add(ball.velocity);
+
+            if(Math.abs(ball.position.x) > 4) {
+                ball.velocity.x *= -1;
+                createParticleExplosion(ball.position);
+            }
+
+            if(ball.position.y > 3.7 && ball.position.y < 4.3) {
+                if(Math.abs(ball.position.x - paddle1.position.x) < 1) {
+                    ball.velocity.y *= -1.02;
+                    createParticleExplosion(ball.position);
+                }
+            }
+
+            if(ball.position.y < -3.7 && ball.position.y > -4.3) {
+                if(Math.abs(ball.position.x - paddle2.position.x) < 1) {
+                    ball.velocity.y *= -1.02;
+                    createParticleExplosion(ball.position);
+                }
+            }
+
+            if(ball.position.y > 5) {
+                player2Score++;
+                lastScorer = 'player2';
+                updateScoreDisplay();
+                resetBall();
+            } else if(ball.position.y < -5) {
+                player1Score++;
+                lastScorer = 'player1';
+                updateScoreDisplay();
+                resetBall();
+            }
+
+            updateParticles();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            updateGame();
+            renderer.render(scene, camera);
+        }
+
+        // Start the game
+        init();
+        animate();
+    </script>
+</body>
+</html>
